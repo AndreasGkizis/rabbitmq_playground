@@ -1,59 +1,83 @@
+using System.Diagnostics;
 using System.Text;
+using Common;
 using RabbitMQ.Client;
 
 namespace SimpleProducer
 {
-    public class Producer
-    {
-        private const string QueueName = "simple_queue";
+	public class Producer
+	{
+		public static async Task Main()
+		{
+			Console.WriteLine("RabbitMQ Producer");
+			var config = ConfigLoader.LoadSharedConfig();
+			var host = config["RabbitMQConfig:HostName"];
+			var testQ = config["RabbitMQConfig:TestQueue"];
+			var numberofmessages = Convert.ToInt32(config["RabbitMQConfig:NumberOfMsgsSent"]);
 
-        public static async Task Main()
-        {
-            Console.WriteLine("RabbitMQ Producer");
+			var factory = new ConnectionFactory() { HostName = host };
 
-            var factory = new ConnectionFactory() { HostName = "localhost" };
+			var props = new BasicProperties
+			{
+				Persistent = true
+			};
 
-            var props = new BasicProperties
-            {
-                Persistent = true
-            };
+			try
+			{
+				using var connection = await factory.CreateConnectionAsync();
+				using var channel = await connection.CreateChannelAsync();
+				await channel.QueueDeclareAsync(
+					queue: testQ,
+					durable: true,
+					exclusive: false,
+					autoDelete: false,
+					arguments: null);
 
-            try
-            {
-                using var connection = await factory.CreateConnectionAsync();
-                using var channel = await connection.CreateChannelAsync();
-                await channel.QueueDeclareAsync(queue: QueueName,
-                                     durable: true,
-                                     exclusive: false,
-                                     autoDelete: false,
-                                     arguments: null);
+				// 3. Core publishing loop
+				string? input;
+				do
+				{
+					Console.WriteLine($"\n--- Publishing Batch of {numberofmessages} messages... ---");
+					var timer = new Stopwatch();
+					timer.Start();
+					await SendBatch(numberofmessages, channel, testQ, props);
+					Console.WriteLine($"Time elapsed: {timer.Elapsed}");
+					Console.WriteLine("-----------------------------------------------------");
 
-                for (int i = 1; i <= 100; i++)
-                {
-                    string message = $"Message {i}";
-                    var body = Encoding.UTF8.GetBytes(message);
+					Console.WriteLine("All messages have been published.");
+					Console.WriteLine("Press [ENTER] to resend, or type 'q' and press [ENTER] to quit.");
+                 
+					// Read user input for loop control
+					input = Console.ReadLine()?.ToLowerInvariant(); 
 
-                    await channel.BasicPublishAsync(
-                        exchange: "",
-                        routingKey: QueueName,
-                        mandatory: false,
-                        basicProperties: props,
-                        body: body);
-                    Console.WriteLine($" [x] Sent '{message}'");
-                    Thread.Sleep(100);
-                }
+				} while (input != "q" && input != "quit");
 
-                Console.WriteLine("\nAll 100 messages have been published.");
-                Console.WriteLine("Press [enter] to exit.");
-                Console.ReadLine();
-            }
-            catch (Exception ex)
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"An error occurred: {ex.Message}");
-                Console.WriteLine("Ensure RabbitMQ is running on localhost and accessible.");
-                Console.ResetColor();
-            }
-        }
-    }
+				Console.WriteLine("Producer shutting down.");
+			}
+			catch (Exception ex)
+			{
+				Console.ForegroundColor = ConsoleColor.Red;
+				Console.WriteLine($"An error occurred: {ex.Message}");
+				Console.WriteLine("Ensure RabbitMQ is running on localhost and accessible.");
+				Console.ResetColor();
+			}
+		}
+
+		private async static Task SendBatch(int numberofmessages, IChannel channel, string testQ, BasicProperties props)
+		{
+			for (int i = 1; i <= numberofmessages; i++)
+			{
+				string message = $"Message {i}";
+				var body = Encoding.UTF8.GetBytes(message);
+
+				await channel.BasicPublishAsync(
+					exchange: "",
+					routingKey: testQ,
+					mandatory: false,
+					basicProperties: props,
+					body: body);
+				Console.WriteLine($" [x] Sent '{message}'");
+			}
+		}
+	}
 }
